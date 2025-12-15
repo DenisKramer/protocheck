@@ -26,14 +26,14 @@ mod validation_data;
 
 /// Adds conversion functions into [`cel::Value`] for oneofs.
 #[cfg(feature = "cel")]
-#[proc_macro_derive(OneofTryIntoCelValue)]
+#[proc_macro_derive(OneofTryIntoCelValue,attributes(protocheck))]
 pub fn oneof_try_into_cel_value_derive(input: TokenStream) -> TokenStream {
   cel_try_into::derive_cel_value_oneof(input)
 }
 
 /// Adds conversion functions into [`cel::Value`] for messages.
 #[cfg(feature = "cel")]
-#[proc_macro_derive(TryIntoCelValue)]
+#[proc_macro_derive(TryIntoCelValue,attributes(protocheck))]
 pub fn try_into_cel_value_derive(input: TokenStream) -> TokenStream {
   cel_try_into::derive_cel_value_struct(input)
 }

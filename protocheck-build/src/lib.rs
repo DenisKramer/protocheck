@@ -9,7 +9,8 @@ use std::{
 };
 
 use prost_build::Config;
-use prost_reflect::{prost::Message, prost_types::FileDescriptorSet};
+
+static VALIDATE_EXT_FIELD_PATH : &str = "buf.validate.field";
 
 /// This function compiles the proto_files in the list, it creates an intermediary file descriptor and it uses it to extract information about the messages, enums and oneofs which can later be used to generate the validation logic with protocheck.
 pub fn compile_protos_with_validators(
@@ -33,11 +34,44 @@ pub fn compile_protos_with_validators(
   let mut fds_file = std::fs::File::open(&temp_descriptor_path)?;
   let mut fds_bytes = Vec::new();
   fds_file.read_to_end(&mut fds_bytes)?;
-  let fds = FileDescriptorSet::decode(fds_bytes.as_slice())?;
-  let pool = prost_reflect::DescriptorPool::from_file_descriptor_set(fds)?;
+  
+  // read pool directly from bytes to access custom options
+  // correctly. See: https://github.com/andrewhickman/prost-reflect/issues/21
+  let pool = prost_reflect::DescriptorPool::decode(fds_bytes.as_slice())?;
 
+  let protovalidate_field_option = pool.get_extension_by_name(VALIDATE_EXT_FIELD_PATH);
+   
   for message_desc in pool.all_messages() {
     let message_name = message_desc.full_name();
+  
+
+    // -------------->
+    // Add protocheck(ignore_field) attribute to fields that are marked by 
+    // buf.validate.field = ALWAYS_IGNORE
+    if let Some(validate_option) = &protovalidate_field_option {
+        for field in message_desc.fields() {
+          let options = field.options();
+          let validate_spec = options.get_extension(validate_option);
+          let ignore_field = match validate_spec.as_message() {
+                        None => false,
+                        Some(msg) => match msg
+                            .fields()
+                            .find(|f| f.0.full_name() == "buf.validate.FieldRules.ignore")
+                            .and_then(|f| f.1.as_enum_number()) {
+                            None => false,
+                            Some(v) => v == 3 // ALWAYS_IGNORE = 3
+                        }
+                    };
+          if ignore_field {
+            config.field_attribute(
+                        field.full_name(), 
+                        r#"#[protocheck(ignore_field)]"#
+            );
+          }
+        }
+    }
+    // <---------------- 
+ 
     if packages.contains(&message_desc.package_name()) {
       let attribute_str = format!(
         r#"#[::protocheck::macros::protobuf_validate("{}")]"#,

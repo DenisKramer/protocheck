@@ -207,6 +207,7 @@ pub(crate) fn derive_cel_value_struct(input: TokenStream) -> TokenStream {
     let field_name = field_ident.to_string();
     let field_type = &field.ty;
     let mut is_oneof = false;
+    let mut is_ignored = false;
 
     for attr in &field.attrs {
       if attr.path().is_ident("prost") {
@@ -217,6 +218,19 @@ pub(crate) fn derive_cel_value_struct(input: TokenStream) -> TokenStream {
           Ok(())
         });
       }
+      if attr.path().is_ident("protocheck") {
+        let _ = attr.parse_nested_meta(|meta| {
+          if meta.path.is_ident("ignore_field") {
+            is_ignored = true;
+          }
+          Ok(())
+        });
+      }
+    }
+    
+    // Do not build cel values for ignored fields, just move on to the next
+    if is_ignored {
+        continue
     }
 
     if is_oneof {
