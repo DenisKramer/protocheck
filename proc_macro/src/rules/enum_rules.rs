@@ -1,25 +1,12 @@
-use std::collections::HashSet;
-
-use proc_macro2::TokenStream;
-use prost_reflect::EnumDescriptor;
-use proto_types::protovalidate::ContainingRules;
-use quote::quote;
-use syn::Error;
-
-use super::protovalidate::EnumRules;
-use crate::{
-  rules::core::{get_field_error, invalid_lists_error},
-  validation_data::{ListRule, ValidationData},
-};
+use crate::*;
 
 pub fn get_enum_rules(
-  enum_ident_str: String,
+  enum_path_str: String,
   enum_desc: &EnumDescriptor,
   validation_data: &ValidationData,
   rules: &EnumRules,
-  static_defs: &mut TokenStream,
-) -> Result<TokenStream, Error> {
-  let mut tokens = TokenStream::new();
+) -> Result<TokenStream2, Error> {
+  let mut tokens = TokenStream2::new();
 
   let enum_name = enum_desc.name();
 
@@ -33,31 +20,29 @@ pub fn get_enum_rules(
   }
 
   if rules.defined_only() {
-    let enum_ident_tokens: TokenStream = enum_ident_str.parse().unwrap_or(quote! { compile_error!(format!("Failed to parse enum ident {} into tokens for enum {} in field {}", field_type_ident, enum_name, field_name)) });
+    let enum_path: Path = syn::parse_str(&enum_path_str).map_err(|e| {
+      error_spanned!(
+        field_span,
+        format!(
+          "Failed to parse enum path `{enum_path_str}` into rust Path for proto enum `{enum_name}` in field `{field_name}`: {e}",
+        )
+      )
+    })?;
 
     let violations_ident = &validation_data.violations_ident;
     let field_context_ident = &validation_data.field_context_ident();
     let value_ident = validation_data.value_ident();
 
-    let error_message = format!("must be a defined value of '{}'", enum_name);
-
     let validator_tokens = quote! {
-      if !#enum_ident_tokens::try_from(#value_ident).is_ok() {
-        #violations_ident.push(::protocheck::validators::enums::defined_only(&#field_context_ident, #error_message));
+      if !#enum_path::try_from(i32::from(#value_ident)).is_ok() {
+        #violations_ident.push(::protocheck::validators::enums::defined_only(&#field_context_ident, #enum_name));
       }
     };
 
     tokens.extend(validator_tokens);
   }
 
-  let ContainingRules {
-    in_list_rule,
-    not_in_list_rule,
-  } = rules
-    .containing_rules(&validation_data.static_full_name())
-    .map_err(|invalid_items| invalid_lists_error(field_span, field_name, &invalid_items))?;
-
-  if let Some(in_list) = in_list_rule {
+  if !rules.r#in.is_empty() {
     let enum_values: HashSet<i32> = enum_desc.values().map(|e| e.number()).collect();
     let mut invalid_numbers: Vec<i32> = Vec::new();
 
@@ -77,12 +62,14 @@ pub fn get_enum_rules(
         ),
       ));
     }
-
-    validation_data.get_list_validator(ListRule::In, &mut tokens, in_list, static_defs);
   }
 
-  if let Some(not_in_list) = not_in_list_rule {
-    validation_data.get_list_validator(ListRule::NotIn, &mut tokens, not_in_list, static_defs);
+  let lists_rules = rules
+    .list_rules()
+    .map_err(|e| get_field_error(field_name, field_span, &e))?;
+
+  if !lists_rules.is_empty() {
+    validation_data.get_list_validators(lists_rules, &mut tokens);
   }
 
   Ok(tokens)

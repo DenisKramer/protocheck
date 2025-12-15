@@ -8,7 +8,7 @@ prost = { workspace = true }
 serde = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
-protocheck = { path = "../protocheck/", features = ["serde"] }
+protocheck = { path = "../protocheck/", features = ["ordered-float"] }
 proto-types = { path = "../proto_types/", features = [
   "serde",
   "cel",
@@ -17,9 +17,10 @@ proto-types = { path = "../proto_types/", features = [
 ] }
 chrono = { workspace = true }
 maplit = { workspace = true }
+ordered-float = { workspace = true }
 
 [build-dependencies]
-protoschema = { path = "../../protoschema/protoschema/", features = [
+protoschema = { version = "0.1.9", path = "../../protoschema-legacy/protoschema", features = [
   "common_types",
   "rpc_types",
 ] }

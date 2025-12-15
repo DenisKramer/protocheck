@@ -1,15 +1,10 @@
-use proc_macro2::TokenStream;
-use proto_types::protovalidate::{TimestampComparableRules, TimestampRules};
-use quote::quote;
-use syn::Error;
-
-use crate::{rules::core::get_field_error, validation_data::ValidationData};
+use crate::*;
 
 pub fn get_timestamp_rules(
   validation_data: &ValidationData,
   rules: &TimestampRules,
-) -> Result<TokenStream, Error> {
-  let mut tokens = TokenStream::new();
+) -> Result<TokenStream2, Error> {
+  let mut tokens = TokenStream2::new();
 
   let field_span = validation_data.field_span;
   let field_name = validation_data.full_name;
@@ -24,7 +19,7 @@ pub fn get_timestamp_rules(
   }
 
   if let Some(within_val) = rules.within {
-    let error_message = format!("must be within {} from now", within_val,);
+    let error_message = format!("must be within {} from now", within_val);
 
     let validator_expression_tokens = quote! {
       ::protocheck::validators::timestamps::within(&#field_context_ident, #value_ident, #within_val, #error_message)
@@ -32,26 +27,39 @@ pub fn get_timestamp_rules(
     validation_data.get_validator_tokens(&mut tokens, &validator_expression_tokens);
   }
 
-  let TimestampComparableRules {
-    comparable_rules,
-    lt_now,
-    gt_now,
-  } = rules
+  let comparable_rules = rules
     .comparable_rules()
-    .map_err(|e| get_field_error(field_name, field_span, &e))?;
+    .validate()
+    .map_err(|e| get_field_error(field_name, field_span, e))?;
 
   if comparable_rules.less_than.is_some() || comparable_rules.greater_than.is_some() {
     validation_data.get_comparable_validator(&mut tokens, &comparable_rules);
   }
 
-  if lt_now {
+  if let Some(timestamp_rules::LessThan::LtNow(true)) = rules.less_than {
+    if comparable_rules.less_than.is_some() {
+      return Err(get_field_error(
+        field_name,
+        field_span,
+        "lt_now and lt/lte cannot be used together",
+      ));
+    }
+
     let validator_expression_tokens = quote! {
       ::protocheck::validators::timestamps::lt_now(&#field_context_ident, #value_ident)
     };
     validation_data.get_validator_tokens(&mut tokens, &validator_expression_tokens);
   }
 
-  if gt_now {
+  if let Some(timestamp_rules::GreaterThan::GtNow(true)) = rules.greater_than {
+    if comparable_rules.greater_than.is_some() {
+      return Err(get_field_error(
+        field_name,
+        field_span,
+        "gt_now and gt/gte cannot be used together",
+      ));
+    }
+
     let validator_expression_tokens = quote! {
       ::protocheck::validators::timestamps::gt_now(&#field_context_ident, #value_ident)
     };

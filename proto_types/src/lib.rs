@@ -28,6 +28,12 @@ pub mod timestamp;
 
 mod any;
 mod any_impls;
+#[cfg(any(
+  feature = "diesel-postgres",
+  feature = "diesel-sqlite",
+  feature = "diesel-mysql"
+))]
+mod diesel_impls;
 
 mod field_mask;
 

@@ -6,6 +6,11 @@
 #[cfg(feature = "timeofday")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[cfg_attr(
+  any(feature = "diesel-postgres", feature = "diesel-sqlite"),
+  derive(diesel::QueryId, diesel::AsExpression, diesel::FromSqlRow),
+  diesel(sql_type = diesel::sql_types::Time)
+)]
 pub struct TimeOfDay {
   /// Hours of day in 24 hour format. Should be from 0 to 23. An API may choose
   /// to allow the value "24:00:00" for scenarios like business closing time.
@@ -219,6 +224,23 @@ pub struct Money {
 /// document and validate your application's limitations.
 #[cfg(feature = "datetime")]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[cfg_attr(
+  any(feature = "diesel-postgres", feature = "diesel-sqlite"),
+  derive(diesel::QueryId, diesel::AsExpression, diesel::FromSqlRow),
+  diesel(sql_type = diesel::sql_types::Timestamp)
+)]
+#[cfg_attr(
+  feature = "diesel-postgres",
+  diesel(sql_type = diesel::sql_types::Timestamptz)
+)]
+#[cfg_attr(
+  feature = "diesel-sqlite",
+  diesel(sql_type = diesel::sql_types::TimestamptzSqlite)
+)]
+#[cfg_attr(
+  feature = "diesel-mysql",
+  diesel(sql_type = diesel::sql_types::Datetime)
+)]
 pub struct DateTime {
   /// Optional. Year of date. Must be from 1 to 9999, or 0 if specifying a
   /// datetime without a year.
@@ -435,6 +457,11 @@ pub struct PostalAddress {
 /// `google.protobuf.Timestamp`.
 #[cfg(feature = "date")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[cfg_attr(
+  any(feature = "diesel-postgres", feature = "diesel-sqlite"),
+  derive(diesel::QueryId, diesel::AsExpression, diesel::FromSqlRow),
+  diesel(sql_type = diesel::sql_types::Date)
+)]
 pub struct Date {
   /// Year of the date. Must be from 1 to 9999, or 0 to specify a date without
   /// a year.

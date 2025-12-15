@@ -1,31 +1,14 @@
-use proc_macro2::TokenStream;
-use prost_reflect::FieldDescriptor;
-use proto_types::{protovalidate::FieldRules, FieldType};
-use protocheck_core::field_data::FieldKind;
-use quote::quote;
-use syn::Error;
-
-use super::{field_rules::Type as RulesType, protovalidate::Ignore};
-use crate::{
-  cel_rule_template::CelRuleTemplateTarget,
-  extract_validators::field_is_message,
-  rules::{
-    cel_rules::get_cel_rules_checked,
-    core::{get_field_error, get_field_rules},
-  },
-  validation_data::{RepeatedValidator, ValidationData},
-};
+use crate::*;
 
 pub fn get_repeated_rules(
   validation_data: &ValidationData,
-  validation_tokens: &mut TokenStream,
-  static_defs: &mut TokenStream,
+  validation_tokens: &mut TokenStream2,
   field_rust_enum: Option<String>,
   field_desc: &FieldDescriptor,
   field_rules: &FieldRules,
 ) -> Result<(), Error> {
-  let mut vec_level_rules: TokenStream = TokenStream::new();
-  let mut items_rules: TokenStream = TokenStream::new();
+  let mut vec_level_rules: TokenStream2 = TokenStream2::new();
+  let mut items_rules: TokenStream2 = TokenStream2::new();
   let mut items_validation_data: Option<ValidationData> = None;
 
   let field_span = validation_data.field_span;
@@ -40,15 +23,15 @@ pub fn get_repeated_rules(
       &CelRuleTemplateTarget::Field {
         field_desc,
         validation_data,
+        field_span: validation_data.field_span,
       },
       &field_rules.cel,
-      static_defs,
     )?);
   }
 
   if let Some(RulesType::Repeated(ref repeated_rules)) = field_rules.r#type {
     if repeated_rules.unique() {
-      if !validation_data.field_kind.inner_type().is_scalar() {
+      if !supports_unique(validation_data.field_kind.inner_type()) {
         return Err(get_field_error(
           field_name,
           field_span,
@@ -63,23 +46,38 @@ pub fn get_repeated_rules(
       let value_ident = items_validation_data.value_ident();
       let violations_ident = items_validation_data.violations_ident;
 
-      vec_level_rules.extend(quote! {
-        let mut processed_values = ::std::collections::HashSet::new();
-        let mut not_unique = false;
-      });
+      let vec_ident = validation_data.value_ident();
 
-      let func_name = match validation_data.field_kind.inner_type() {
-        FieldType::Float => quote! { unique_f32 },
-        FieldType::Double => quote! { unique_f64 },
-        _ => quote! { unique },
+      let is_float = matches!(
+        validation_data.field_kind.inner_type(),
+        FieldType::Float | FieldType::Double
+      );
+
+      let ordered_floats_enabled = cfg!(feature = "ordered-float");
+
+      let lookup_tokens = if is_float && !ordered_floats_enabled {
+        quote! { ::protocheck::validators::repeated::UniqueLookup::Vec(vec![]) }
+      } else {
+        quote! {
+          if #vec_ident.len() < 16 {
+            ::protocheck::validators::repeated::UniqueLookup::Vec(vec![])
+          } else {
+            ::protocheck::validators::repeated::UniqueLookup::Set(::std::collections::HashSet::new())
+          }
+        }
       };
 
+      vec_level_rules.extend(quote! {
+        let mut processed_values = #lookup_tokens;
+        let mut found_not_unique_items = false;
+      });
+
       items_rules.extend(quote! {
-        if !not_unique {
-          match ::protocheck::validators::repeated::#func_name(&#field_context_ident, #value_ident, &mut processed_values) {
+        if !found_not_unique_items {
+          match ::protocheck::validators::repeated::unique(&#field_context_ident, #value_ident, &mut processed_values) {
             Ok(_) => {},
             Err(v) => {
-              not_unique = true;
+              found_not_unique_items = true;
               #violations_ident.push(v);
             }
           };
@@ -107,7 +105,6 @@ pub fn get_repeated_rules(
         if let Some(ref rules_type) = items_rules_descriptor.r#type
           && !item_is_message {
             let items_rules_tokens = get_field_rules(
-              static_defs,
               field_rust_enum,
               field_desc,
               repeated_items_validation_data,
@@ -122,9 +119,9 @@ pub fn get_repeated_rules(
             &CelRuleTemplateTarget::Field {
               field_desc,
               validation_data: repeated_items_validation_data,
+              field_span: validation_data.field_span,
             },
             &items_rules_descriptor.cel,
-            static_defs,
           )?;
           items_rules.extend(cel_rules);
         }
@@ -148,4 +145,8 @@ pub fn get_repeated_rules(
   );
 
   Ok(())
+}
+
+fn supports_unique(field_type: FieldType) -> bool {
+  !matches!(field_type, FieldType::Message | FieldType::Any)
 }

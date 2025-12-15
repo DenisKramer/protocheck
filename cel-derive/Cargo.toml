@@ -1,18 +1,16 @@
 [package]
 name = "cel-derive"
-publish = false
-
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+keywords.workspace = true
+repository.workspace = true
 edition.workspace = true
 
-[lib]
-proc-macro = true
-
 [dependencies]
-syn = { workspace = true, features = ["full", "extra-traits"] }
-quote = { workspace = true }
-proc-macro2 = { workspace = true }
-
-
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
+cel-derive-macro = { path = "../cel-derive-macro/" }
+proto-types = { path = "../proto_types/", default-features = false, features = [
+  "cel",
+] }
+cel = { workspace = true }

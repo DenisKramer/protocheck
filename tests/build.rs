@@ -79,10 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   let proto_include_paths = &["proto", "proto_deps"];
 
-  let mut files = get_proto_files_recursive(&PathBuf::from("proto/myapp/v1"))?;
-  files.extend(get_proto_files_recursive(&PathBuf::from(
-    "proto_deps/google",
-  ))?);
+  let files = get_proto_files_recursive(PathBuf::from("proto/myapp/v1"))?;
 
   let mut config = Config::new();
   config
@@ -94,12 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
     .out_dir(&out_dir);
 
-  compile_protos_with_validators(
-    &mut config,
-    &files,
-    proto_include_paths,
-    &["myapp.v1", "google.type", "google.rpc"],
-  )?;
+  compile_protos_with_validators(&mut config, &files, proto_include_paths, &["myapp.v1"])?;
 
   config.compile_protos(&files, proto_include_paths)?;
 

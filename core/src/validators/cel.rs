@@ -1,15 +1,9 @@
-use std::{sync::LazyLock, vec};
-
-use cel::{Context, Program, Value as CelValue};
+use ::cel::{Context, Program, Value as CelValue};
 use chrono::Utc;
 use proto_types::cel::CelConversionError;
 
-use crate::{
-  field_data::FieldContext,
-  protovalidate::{FieldPath, FieldPathElement, Violation},
-  validators::static_data::base_violations::create_violation,
-  ProtoType,
-};
+use super::*;
+use crate::protovalidate::{violations_data::CEL_VIOLATION, Violation};
 
 pub struct CelRule {
   pub id: &'static str,
@@ -32,54 +26,42 @@ where
     ..
   } = rule;
 
-  let error_prefix = format!(
-    "Error during Cel validation for field {}:",
-    field_context.proto_name
-  );
-
   let mut cel_context = Context::default();
   cel_context.add_variable_from_value("now", CelValue::Timestamp(Utc::now().into()));
 
   cel_context.add_variable_from_value("this", value);
 
-  let result = program.execute(&cel_context);
+  let result = program.execute(&cel_context).map_err(|e| {
+    eprintln!(
+      "Error during Cel validation for field {}: {e}",
+      field_context.proto_name
+    );
 
-  match result {
-    Ok(value) => {
-      if let CelValue::Bool(bool_value) = value {
-        if bool_value {
-          Ok(())
-        } else {
-          Err(create_violation(
-            field_context,
-            &CEL_VIOLATION,
-            rule_id,
-            error_message,
-          ))
-        }
-      } else {
-        eprintln!(
-          "{} expected boolean result from expression, got `{:?}`",
-          error_prefix,
-          value.type_of()
-        );
-        Err(create_violation(
-          field_context,
-          &CEL_VIOLATION,
-          "internal server error",
-          "internal server error",
-        ))
-      }
-    }
-    Err(e) => {
-      eprintln!("{} {:?}", error_prefix, e);
-      Err(create_violation(
+    create_cel_field_violation(rule_id, field_context, "internal server error")
+  })?;
+
+  if let CelValue::Bool(bool_value) = result {
+    if bool_value {
+      Ok(())
+    } else {
+      Err(create_cel_field_violation(
+        rule_id,
         field_context,
-        &CEL_VIOLATION,
-        "internal server error",
-        "internal server error",
+        error_message,
       ))
     }
+  } else {
+    eprintln!(
+      "Error during Cel validation for field {}: expected boolean result from expression, got `{:?}`",
+      field_context.proto_name,
+      result.type_of()
+    );
+
+    Err(create_cel_field_violation(
+      rule_id,
+      field_context,
+      "internal server error",
+    ))
   }
 }
 
@@ -90,26 +72,18 @@ pub fn validate_cel_field_try_into<T>(
 ) -> Result<(), Violation>
 where
   T: TryInto<CelValue> + Clone,
-  <T as std::convert::TryInto<cel::Value>>::Error: std::fmt::Display,
+  <T as std::convert::TryInto<::cel::Value>>::Error: std::fmt::Display,
 {
-  let cel_conversion: Result<CelValue, _> = value.try_into();
+  let cel_val: CelValue = value.try_into().map_err(|e| {
+    eprintln!(
+      "Failed to convert field {} to Cel value: {}",
+      rule.item_full_name, e
+    );
 
-  match cel_conversion {
-    Ok(cel_val) => validate_cel_field_with_val(field_context, rule, cel_val),
-    Err(e) => {
-      eprintln!(
-        "Failed to convert field {} to Cel value: {}",
-        rule.item_full_name, e
-      );
+    create_cel_field_violation(rule.id, field_context, "internal server error")
+  })?;
 
-      Err(create_violation(
-        field_context,
-        &CEL_VIOLATION,
-        "internal server error",
-        "internal server error",
-      ))
-    }
-  }
+  validate_cel_field_with_val(field_context, rule, cel_val)
 }
 
 pub fn validate_cel_message<T>(
@@ -127,58 +101,54 @@ where
     item_full_name: message_name,
   } = rule;
 
-  let error_prefix = format!("Error during Cel validation for message {}:", message_name);
-
   let mut cel_context = Context::default();
   cel_context.add_variable_from_value("now", CelValue::Timestamp(Utc::now().into()));
 
-  let cel_conversion: Result<CelValue, CelConversionError> = value.try_into();
+  let cel_val: CelValue = value.try_into().map_err(|e| {
+    eprintln!(
+      "Error during Cel validation for message {message_name}: could not convert message to Cel value: {e}"
+    );
 
-  match cel_conversion {
-    Ok(cel_val) => {
-      cel_context.add_variable_from_value("this", cel_val);
-      let result = program.execute(&cel_context);
+    create_cel_message_violation(
+      "internal_server_error",
+      "internal server error",
+      parent_elements,
+    )
+  })?;
 
-      match result {
-        Ok(value) => {
-          if let CelValue::Bool(bool_value) = value {
-            if bool_value {
-              Ok(())
-            } else {
-              Err(create_cel_message_violation(
-                rule_id,
-                error_message,
-                parent_elements,
-              ))
-            }
-          } else {
-            eprintln!(
-              "{} expected boolean result from expression, got `{:?}`",
-              error_prefix,
-              value.type_of()
-            );
-            Err(create_cel_message_violation(
-              "internal_server_error",
-              "internal server error",
-              parent_elements,
-            ))
-          }
-        }
-        Err(e) => {
-          eprintln!("{} program failed to compile: {:?}", error_prefix, e);
+  cel_context.add_variable_from_value("this", cel_val);
+  let result = program.execute(&cel_context);
+
+  match result {
+    Ok(value) => {
+      if let CelValue::Bool(bool_value) = value {
+        if bool_value {
+          Ok(())
+        } else {
           Err(create_cel_message_violation(
-            "internal_server_error",
-            "internal server error",
+            rule_id,
+            error_message,
             parent_elements,
           ))
         }
+      } else {
+        eprintln!(
+          "Error during Cel validation for message {message_name}: expected boolean result from expression, got `{:?}`",
+          value.type_of()
+        );
+
+        Err(create_cel_message_violation(
+          "internal_server_error",
+          "internal server error",
+          parent_elements,
+        ))
       }
     }
     Err(e) => {
       eprintln!(
-        "{} could not convert message to Cel value: {:?}",
-        error_prefix, e
+        "Error during Cel validation for message {message_name}: program failed to compile: {e}",
       );
+
       Err(create_cel_message_violation(
         "internal_server_error",
         "internal server error",
@@ -186,6 +156,14 @@ where
       ))
     }
   }
+}
+
+fn create_cel_field_violation(
+  rule_id: &str,
+  field_context: &FieldContext,
+  error_message: &str,
+) -> Violation {
+  create_violation_with_custom_id(rule_id, field_context, &CEL_VIOLATION, error_message)
 }
 
 fn create_cel_message_violation(
@@ -202,20 +180,9 @@ fn create_cel_message_violation(
     message: Some(error_message.to_string()),
     rule_id: Some(rule_id.to_string()),
     rule: Some(FieldPath {
-      elements: CEL_VIOLATION.clone(),
+      elements: CEL_VIOLATION.elements.to_vec(),
     }),
     field: field_path,
     for_key: None,
   }
 }
-
-static CEL_VIOLATION: LazyLock<Vec<FieldPathElement>> = LazyLock::new(|| {
-  vec![FieldPathElement {
-    field_name: Some("cel".to_string()),
-    field_number: Some(23),
-    field_type: Some(ProtoType::Message as i32),
-    key_type: None,
-    value_type: None,
-    subscript: None,
-  }]
-});
